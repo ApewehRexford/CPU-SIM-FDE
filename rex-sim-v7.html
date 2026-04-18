@@ -1,0 +1,1047 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>CPU SIM Von Neumann Architecture</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&family=VT323&family=Fira+Code:wght@400;700&family=IBM+Plex+Mono:wght@400;700&family=Courier+Prime:wght@400;700&display=swap" rel="stylesheet"/>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+
+/* ── THEMES ── */
+:root{
+  --bg:#020c14;--surface:#040f1a;--panel:#071520;--border:#0d2d40;
+  --accent:#00d4ff;--accent2:#00ff9d;--accent3:#ff6b35;--accent4:#ffd700;
+  --text:#c8e8f0;--muted:#4a7a8a;--dim:#1a3a4a;
+  --fetch:#00d4ff;--decode:#ffd700;--execute:#00ff9d;--halted:#ff4444;
+  --editor-color:#ffd700;
+  --font-ui:'Share Tech Mono',monospace;
+  --font-size:11px;
+}
+[data-theme="amber"]{
+  --bg:#100800;--surface:#180e00;--panel:#1a1000;--border:#3a2200;
+  --accent:#ffaa00;--accent2:#ffcc44;--accent3:#ff6600;--accent4:#ffffff;
+  --text:#ffe4a0;--muted:#7a5a20;--dim:#3a2800;
+  --fetch:#ffaa00;--decode:#ffffff;--execute:#ffcc44;--halted:#ff3300;
+  --editor-color:#ffcc44;
+}
+[data-theme="green"]{
+  --bg:#000e00;--surface:#001400;--panel:#001800;--border:#003300;
+  --accent:#00ff44;--accent2:#44ff88;--accent3:#ffff00;--accent4:#aaffaa;
+  --text:#80ff80;--muted:#2a8a2a;--dim:#003300;
+  --fetch:#00ff44;--decode:#ffff00;--execute:#44ff88;--halted:#ff4400;
+  --editor-color:#44ff88;
+}
+[data-theme="red"]{
+  --bg:#0e0000;--surface:#140000;--panel:#180000;--border:#3a0000;
+  --accent:#ff4444;--accent2:#ff8888;--accent3:#ffaa00;--accent4:#ffdddd;
+  --text:#ffcccc;--muted:#7a2a2a;--dim:#3a0000;
+  --fetch:#ff4444;--decode:#ffaa00;--execute:#ff8888;--halted:#ff0000;
+  --editor-color:#ffaa00;
+}
+[data-theme="paper"]{
+  --bg:#f5f0e8;--surface:#ece5d5;--panel:#e8e0cc;--border:#c8b898;
+  --accent:#2a4a6a;--accent2:#1a6a3a;--accent3:#8a3a00;--accent4:#5a2a00;
+  --text:#1a1a1a;--muted:#6a5a40;--dim:#c8b898;
+  --fetch:#2a4a6a;--decode:#5a2a00;--execute:#1a6a3a;--halted:#8a0000;
+  --editor-color:#1a1a1a;
+}
+
+html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:var(--font-ui);font-size:var(--font-size);transition:background .3s,color .3s}
+
+/* ── Scanline overlay ── */
+.scanlines::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:9999;
+  background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.07) 2px,rgba(0,0,0,.07) 4px)}
+
+/* ── Layout ── */
+.shell{display:grid;grid-template-columns:290px 1fr 210px;grid-template-rows:50px 1fr 185px;height:100vh;gap:1px;background:var(--border)}
+.titlebar{grid-column:1/-1;background:var(--surface);display:flex;align-items:center;padding:0 20px;gap:16px;border-bottom:2px solid var(--border)}
+.titlebar h1{font-family:'Orbitron',monospace;font-size:13px;font-weight:900;color:var(--accent);letter-spacing:.22em;white-space:nowrap}
+.phase-badge{margin-left:auto;font-size:10px;padding:4px 14px;border-radius:3px;font-weight:700;letter-spacing:.12em;transition:all .2s;white-space:nowrap}
+.phase-IDLE{background:var(--dim);color:var(--muted)}
+.phase-FETCH{background:var(--dim);color:var(--fetch);box-shadow:0 0 12px color-mix(in srgb,var(--fetch) 35%,transparent)}
+.phase-DECODE{background:var(--dim);color:var(--decode);box-shadow:0 0 12px color-mix(in srgb,var(--decode) 35%,transparent)}
+.phase-EXECUTE{background:var(--dim);color:var(--execute);box-shadow:0 0 12px color-mix(in srgb,var(--execute) 35%,transparent)}
+.phase-HALTED{background:var(--dim);color:var(--halted);box-shadow:0 0 12px color-mix(in srgb,var(--halted) 35%,transparent)}
+.cycle-ctr{font-size:10px;color:var(--muted);white-space:nowrap;font-family:'Orbitron',monospace;letter-spacing:.08em}
+.phase-legend{display:flex;gap:10px;align-items:center;padding:0 6px}
+.phase-pip{display:flex;align-items:center;gap:4px;font-size:8px;letter-spacing:.08em;color:var(--muted)}
+.phase-pip::before{content:'';width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.pip-fetch::before{background:var(--fetch)}
+.pip-decode::before{background:var(--decode)}
+.pip-execute::before{background:var(--execute)}
+.titlebar-btns{display:flex;gap:6px;margin-left:8px}
+.tb-btn{background:transparent;border:1px solid var(--border);color:var(--muted);font-size:14px;padding:3px 10px;cursor:pointer;border-radius:3px;transition:all .15s;line-height:1.4}
+.tb-btn:hover{color:var(--accent);border-color:var(--accent)}
+.tb-btn.active{color:var(--accent);border-color:var(--accent)}
+
+/* ── Panels ── */
+.left-panel,.right-panel{background:var(--panel);overflow:hidden;display:flex;flex-direction:column}
+.schematic{background:var(--surface);position:relative;overflow:hidden}
+.bottom-section{background:var(--panel);padding:12px 14px;overflow:hidden;display:flex;flex-direction:column}
+.panel-label{font-size:9px;font-weight:700;letter-spacing:.18em;color:var(--muted);padding:10px 14px 7px;border-bottom:1px solid var(--border);text-transform:uppercase;flex-shrink:0}
+
+/* ── Editor ── */
+.editor-wrap{flex:1;position:relative;overflow:hidden}
+textarea{width:100%;height:100%;background:transparent;border:none;outline:none;color:var(--editor-color);font-family:var(--font-ui);font-size:var(--font-size);line-height:1.85;padding:12px 14px;resize:none;caret-color:var(--accent)}
+textarea::selection{background:color-mix(in srgb,var(--accent) 20%,transparent)}
+
+/* ── Buttons ── */
+.btn-group{display:flex;flex-direction:column;gap:6px;padding:10px 10px 8px}
+button{font-family:var(--font-ui);font-size:var(--font-size);font-weight:700;letter-spacing:.08em;padding:8px 10px;border:1px solid;border-radius:2px;cursor:pointer;transition:all .15s;text-transform:uppercase}
+.btn-load{background:color-mix(in srgb,var(--accent) 8%,transparent);color:var(--accent);border-color:color-mix(in srgb,var(--accent) 35%,transparent)}
+.btn-load:hover{background:color-mix(in srgb,var(--accent) 18%,transparent)}
+.btn-step{background:color-mix(in srgb,var(--accent2) 8%,transparent);color:var(--accent2);border-color:color-mix(in srgb,var(--accent2) 35%,transparent)}
+.btn-step:hover{background:color-mix(in srgb,var(--accent2) 18%,transparent)}
+.btn-run{background:color-mix(in srgb,var(--accent2) 5%,transparent);color:var(--accent2);border-color:color-mix(in srgb,var(--accent2) 25%,transparent)}
+.btn-run.running{color:var(--halted);border-color:color-mix(in srgb,var(--halted) 35%,transparent)}
+.btn-reset{background:color-mix(in srgb,var(--accent3) 8%,transparent);color:var(--accent3);border-color:color-mix(in srgb,var(--accent3) 35%,transparent)}
+.btn-reset:hover{background:color-mix(in srgb,var(--accent3) 18%,transparent)}
+.speed-row{display:flex;align-items:center;gap:8px;padding:4px 10px 6px;font-size:9px;color:var(--muted)}
+.speed-row input{flex:1;accent-color:var(--accent)}
+.btn-icon{background:color-mix(in srgb,var(--muted) 8%,transparent);color:var(--muted);border-color:var(--dim);font-size:10px;padding:5px}
+.btn-icon:hover{color:var(--accent)}
+
+/* ── Registers ── */
+.reg-list{padding:8px;display:flex;flex-direction:column;gap:5px;flex:1;overflow:auto}
+.reg-item{display:flex;justify-content:space-between;align-items:center;padding:7px 10px;border:1px solid var(--dim);border-radius:2px;transition:all .2s;cursor:default}
+.reg-item.active{border-color:var(--accent2);background:color-mix(in srgb,var(--accent2) 6%,transparent);box-shadow:0 0 6px color-mix(in srgb,var(--accent2) 20%,transparent)}
+.reg-name{font-size:9px;color:var(--muted);letter-spacing:.06em}
+.reg-val{font-size:16px;font-family:'Orbitron',monospace;font-weight:700;color:var(--text)}
+.reg-val.changed{color:var(--accent2)}
+.flags-row{display:flex;gap:4px;padding:6px 8px;border-top:1px solid var(--border)}
+.flag{flex:1;text-align:center;padding:5px 3px;font-size:9px;font-weight:700;border:1px solid var(--dim);border-radius:2px;transition:all .2s;color:var(--muted)}
+.flag.on{color:var(--accent4);border-color:color-mix(in srgb,var(--accent4) 40%,transparent);background:color-mix(in srgb,var(--accent4) 8%,transparent)}
+
+/* ── Log ── */
+.log-area{flex:1;overflow-y:auto;padding:8px 12px;font-size:10px;line-height:1.8;scrollbar-width:thin;scrollbar-color:var(--dim) transparent}
+.log-line{padding:2px 0}
+.log-fetch{color:color-mix(in srgb,var(--fetch) 60%,var(--muted))}
+.log-decode{color:color-mix(in srgb,var(--decode) 60%,var(--muted))}
+.log-execute{color:color-mix(in srgb,var(--execute) 60%,var(--muted))}
+.log-io{color:var(--accent3);font-weight:700}
+.log-halt{color:var(--halted);font-weight:700}
+.log-bp{color:var(--accent4);font-weight:700}
+
+/* ── Desc bar ── */
+.desc-bar{font-size:10px;color:var(--accent4);padding:7px 14px;border-top:1px solid var(--border);min-height:30px;background:color-mix(in srgb,var(--accent4) 3%,var(--panel));flex-shrink:0}
+
+/* ── I/O ── */
+.io-wrap { display: flex; flex-direction: column; gap: 8px; flex: 1; overflow: hidden; }
+.io-label { font-size: 8px; color: var(--muted); letter-spacing: .12em; text-transform: uppercase; flex-shrink: 0; }
+
+/* Force the input container to share 50/50 space and not overflow */
+.io-wrap > div:first-child { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+
+.io-input {
+  width: 100%;
+  flex: 1; /* Makes the textarea fill its half of the space properly */
+  background: color-mix(in srgb, var(--accent2) 4%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--accent2) 25%, transparent);
+  color: var(--accent2);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  padding: 6px 8px; /* Added inner padding */
+  border-radius: 2px;
+  outline: none;
+  resize: none;
+}
+.io-input:focus { border-color: var(--accent2); }
+
+.io-output {
+  flex: 1;
+  background: color-mix(in srgb, var(--accent3) 3%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--accent3) 15%, transparent);
+  border-radius: 2px;
+  padding: 8px 0; /* Top and bottom breathing room */
+  font-size: 11px;
+  overflow-y: auto;
+  color: var(--accent3);
+}
+
+.io-out-item {
+  padding: 4px 16px !important; /* Pushes the text 16px away from the left wall */
+  border-bottom: 1px solid color-mix(in srgb, var(--accent3) 10%, transparent);
+}
+/* ── Memory table ── */
+.mem-table{width:100%;border-collapse:collapse;font-size:10px}
+.mem-table th{color:var(--muted);font-size:8px;letter-spacing:.1em;padding:4px 7px;text-align:left;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--panel)}
+.mem-table td{padding:3px 7px;border-bottom:1px solid color-mix(in srgb,var(--border) 50%,transparent);cursor:pointer;transition:background .1s}
+.mem-table td:hover{background:color-mix(in srgb,var(--accent) 8%,transparent)}
+.mem-table tr.active td{background:color-mix(in srgb,var(--execute) 8%,transparent);color:var(--execute)}
+.mem-table tr.bp td:first-child{color:var(--halted)}
+.mem-table tr.bp-active td{background:color-mix(in srgb,var(--halted) 8%,transparent)}
+.mem-addr{color:var(--muted)}
+.mem-hex{font-family:'Orbitron',monospace;font-size:9px}
+.mem-disasm{color:var(--muted);font-size:8px}
+.mem-edit-input{background:color-mix(in srgb,var(--accent) 10%,transparent);border:1px solid var(--accent);color:var(--accent);font-family:var(--font-ui);font-size:10px;width:36px;padding:0 3px;outline:none;border-radius:1px}
+.mem-wrap{flex:1;overflow-y:auto}
+
+/* ═══════════════════════════════════════
+   SETTINGS DRAWER
+═══════════════════════════════════════ */
+.settings-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:1000;opacity:0;pointer-events:none;transition:opacity .25s;display:flex;align-items:center;justify-content:center}
+.settings-overlay.open{opacity:1;pointer-events:all}
+.settings-drawer{position:fixed;top:50%;left:50%;width:min(520px,92vw);max-height:88vh;background:var(--surface);border:1px solid var(--border);border-radius:6px;z-index:1001;transform:translate(-50%,-50%) scale(.96);transition:transform .28s cubic-bezier(.4,0,.2,1),opacity .28s;overflow-y:auto;display:flex;flex-direction:column;opacity:0;pointer-events:none;box-shadow:0 24px 64px rgba(0,0,0,.7)}
+.settings-drawer.open{transform:translate(-50%,-50%) scale(1);opacity:1;pointer-events:all}
+.settings-header{display:flex;align-items:center;justify-content:space-between;padding:18px 24px;border-bottom:1px solid var(--border);font-family:'Orbitron',monospace;font-size:12px;font-weight:700;color:var(--accent);letter-spacing:.18em;flex-shrink:0;position:sticky;top:0;background:var(--surface);z-index:1}
+.settings-close{background:transparent;border:1px solid var(--border);color:var(--muted);font-size:16px;width:32px;height:32px;cursor:pointer;border-radius:3px;transition:all .15s;display:flex;align-items:center;justify-content:center}
+.settings-close:hover{color:var(--accent);border-color:var(--accent)}
+.settings-body{padding:24px;display:flex;flex-direction:column;gap:24px}
+.setting-group{display:flex;flex-direction:column;gap:10px}
+.setting-group-title{font-size:9px;font-weight:700;letter-spacing:.22em;color:var(--muted);text-transform:uppercase;padding-bottom:8px;border-bottom:1px solid var(--border)}
+.setting-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:4px 0}
+.setting-label{font-size:11px;color:var(--text)}
+.setting-desc{font-size:9px;color:var(--muted);margin-top:2px}
+
+/* theme swatches */
+.theme-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+.theme-swatch{border:2px solid transparent;border-radius:4px;cursor:pointer;aspect-ratio:1;transition:all .15s;position:relative;overflow:hidden}
+.theme-swatch.active{border-color:var(--accent);box-shadow:0 0 8px color-mix(in srgb,var(--accent) 40%,transparent)}
+.theme-swatch span{position:absolute;bottom:3px;left:0;right:0;text-align:center;font-size:7px;font-weight:700}
+
+/* font picker */
+.font-list{display:flex;flex-direction:column;gap:6px}
+.font-option{padding:10px 12px;border:1px solid var(--dim);border-radius:3px;cursor:pointer;transition:all .15s;font-size:12px}
+.font-option:hover{border-color:var(--muted);background:color-mix(in srgb,var(--muted) 5%,transparent)}
+.font-option.active{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,transparent);color:var(--accent)}
+
+/* toggle */
+.toggle{position:relative;display:inline-block;width:36px;height:20px;flex-shrink:0}
+.toggle input{opacity:0;width:0;height:0}
+.toggle-slider{position:absolute;inset:0;background:var(--dim);border-radius:20px;cursor:pointer;transition:.2s}
+.toggle-slider:before{content:'';position:absolute;height:14px;width:14px;left:3px;bottom:3px;background:var(--muted);border-radius:50%;transition:.2s}
+.toggle input:checked+.toggle-slider{background:color-mix(in srgb,var(--accent2) 40%,var(--bg))}
+.toggle input:checked+.toggle-slider:before{transform:translateX(16px);background:var(--accent2)}
+
+/* slider */
+.range-row{display:flex;align-items:center;gap:8px}
+.range-row input[type=range]{flex:1;accent-color:var(--accent)}
+.range-val{font-size:10px;color:var(--accent);min-width:30px;text-align:right}
+
+/* select */
+select{background:var(--panel);border:1px solid var(--border);color:var(--text);font-family:var(--font-ui);font-size:10px;padding:4px 8px;border-radius:2px;outline:none;cursor:pointer}
+select:focus{border-color:var(--accent)}
+
+/* kbd shortcuts table */
+.kbd-table{width:100%;font-size:9px;border-collapse:collapse}
+.kbd-table td{padding:5px 0;color:var(--muted);border-bottom:1px solid color-mix(in srgb,var(--border) 40%,transparent)}
+.kbd-table td:first-child{color:var(--text);width:70px}
+kbd{background:var(--dim);color:var(--text);border:1px solid var(--border);border-radius:2px;padding:1px 5px;font-family:var(--font-ui);font-size:9px}
+
+/* export/import */
+.file-btns{display:flex;gap:8px}
+.file-btn{flex:1;background:color-mix(in srgb,var(--accent) 6%,transparent);color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 30%,transparent);font-family:var(--font-ui);font-size:10px;padding:9px;border-radius:3px;cursor:pointer;text-align:center;letter-spacing:.06em;font-weight:700;transition:all .15s}
+.file-btn:hover{background:color-mix(in srgb,var(--accent) 16%,transparent);border-color:color-mix(in srgb,var(--accent) 50%,transparent)}
+
+/* ── SVG ── */
+svg{width:100%;height:100%}
+.bus-active-line{stroke-width:2.5;fill:none;stroke-dasharray:10 6;animation:dash .6s linear infinite}
+[data-animations="off"] .bus-active-line{animation:none}
+@keyframes dash{to{stroke-dashoffset:-32}}
+
+/* ── Breakpoint dot ── */
+.bp-dot{width:8px;height:8px;border-radius:50%;background:var(--halted);display:inline-block;margin-right:4px;flex-shrink:0}
+</style>
+</head>
+<body class="scanlines" id="body-el">
+
+<!-- ═══════════════════════ SETTINGS DRAWER ═══════════════════════ -->
+<div class="settings-overlay" id="settings-overlay" onclick="closeSettings()"></div>
+<div class="settings-drawer" id="settings-drawer">
+  <div class="settings-header">
+    ⚙ SYSTEM SETTINGS
+    <button class="settings-close" onclick="closeSettings()">✕</button>
+  </div>
+  <div class="settings-body">
+
+    <!-- THEME -->
+    <div class="setting-group">
+      <div class="setting-group-title">Display Theme</div>
+      <div class="theme-grid">
+        <div class="theme-swatch active" data-theme="" onclick="setTheme(this,'')" style="background:linear-gradient(135deg,#020c14,#00d4ff44)"><span style="color:#00d4ff">CYAN</span></div>
+        <div class="theme-swatch" data-theme="amber" onclick="setTheme(this,'amber')" style="background:linear-gradient(135deg,#100800,#ffaa0044)"><span style="color:#ffaa00">AMBER</span></div>
+        <div class="theme-swatch" data-theme="green" onclick="setTheme(this,'green')" style="background:linear-gradient(135deg,#000e00,#00ff4444)"><span style="color:#00ff44">GREEN</span></div>
+        <div class="theme-swatch" data-theme="red" onclick="setTheme(this,'red')" style="background:linear-gradient(135deg,#0e0000,#ff444444)"><span style="color:#ff4444">RED</span></div>
+        <div class="theme-swatch" data-theme="paper" onclick="setTheme(this,'paper')" style="background:linear-gradient(135deg,#f5f0e8,#2a4a6a44)"><span style="color:#2a4a6a">PAPER</span></div>
+      </div>
+    </div>
+
+    <!-- FONT -->
+    <div class="setting-group">
+      <div class="setting-group-title">Editor & UI Font</div>
+      <div class="font-list">
+        <div class="font-option active" data-font="'Share Tech Mono',monospace" onclick="setFont(this)" style="font-family:'Share Tech Mono',monospace">Share Tech Mono — AaBbCc 0123</div>
+        <div class="font-option" data-font="'VT323',monospace" onclick="setFont(this)" style="font-family:'VT323',monospace;font-size:15px">VT323 — AaBbCc 0123 (retro CRT)</div>
+        <div class="font-option" data-font="'Fira Code',monospace" onclick="setFont(this)" style="font-family:'Fira Code',monospace">Fira Code — AaBbCc 0123</div>
+        <div class="font-option" data-font="'IBM Plex Mono',monospace" onclick="setFont(this)" style="font-family:'IBM Plex Mono',monospace">IBM Plex Mono — AaBbCc 0123</div>
+        <div class="font-option" data-font="'Courier Prime',monospace" onclick="setFont(this)" style="font-family:'Courier Prime',monospace">Courier Prime — AaBbCc 0123</div>
+      </div>
+    </div>
+
+    <!-- FONT SIZE -->
+    <div class="setting-group">
+      <div class="setting-group-title">Font Size</div>
+      <div class="range-row">
+        <input type="range" min="9" max="15" value="11" step="1" oninput="setFontSize(this.value)"/>
+        <span class="range-val" id="font-size-val">11px</span>
+      </div>
+    </div>
+
+    <!-- NUMBER BASE -->
+    <div class="setting-group">
+      <div class="setting-group-title">Number Base</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        <button class="font-option active" data-base="16" onclick="setBase(this,16)" style="text-align:center;padding:6px">HEX — FF</button>
+        <button class="font-option" data-base="10" onclick="setBase(this,10)" style="text-align:center;padding:6px">DEC — 255</button>
+        <button class="font-option" data-base="2" onclick="setBase(this,2)" style="text-align:center;padding:6px">BIN — 11111111</button>
+        <button class="font-option" data-base="8" onclick="setBase(this,8)" style="text-align:center;padding:6px">OCT — 377</button>
+      </div>
+    </div>
+
+    <!-- MEMORY SIZE -->
+    <div class="setting-group">
+      <div class="setting-group-title">Memory Size</div>
+      <div class="setting-row">
+        <div><div class="setting-label">Address cells</div><div class="setting-desc">Requires program reload</div></div>
+        <select id="mem-size-sel" onchange="setMemSize(this.value)">
+          <option value="16">16 cells (4-bit)</option>
+          <option value="32">32 cells (5-bit)</option>
+          <option value="64">64 cells (6-bit)</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- VISUAL TOGGLES -->
+    <div class="setting-group">
+      <div class="setting-group-title">Visual Effects</div>
+      <div class="setting-row">
+        <div><div class="setting-label">Scanlines</div><div class="setting-desc">CRT phosphor effect</div></div>
+        <label class="toggle"><input type="checkbox" checked id="tog-scanlines" onchange="toggleScanlines(this.checked)"/><span class="toggle-slider"></span></label>
+      </div>
+      <div class="setting-row" style="margin-top:10px">
+        <div><div class="setting-label">Bus animations</div><div class="setting-desc">Animated data flow on buses</div></div>
+        <label class="toggle"><input type="checkbox" checked id="tog-anim" onchange="toggleAnim(this.checked)"/><span class="toggle-slider"></span></label>
+      </div>
+      <div class="setting-row" style="margin-top:10px">
+        <div><div class="setting-label">Glow effects</div><div class="setting-desc">Component highlight glow</div></div>
+        <label class="toggle"><input type="checkbox" checked id="tog-glow" onchange="toggleGlow(this.checked)"/><span class="toggle-slider"></span></label>
+      </div>
+    </div>
+
+    <!-- EXPORT / IMPORT -->
+    <div class="setting-group">
+      <div class="setting-group-title">Program File</div>
+      <div class="file-btns">
+        <button class="file-btn" onclick="exportASM()">↑ EXPORT .ASM</button>
+        <label class="file-btn" style="cursor:pointer">↓ IMPORT .ASM<input type="file" accept=".asm,.txt" style="display:none" onchange="importASM(this)"/></label>
+      </div>
+    </div>
+
+    <!-- KEYBOARD SHORTCUTS -->
+    <div class="setting-group">
+      <div class="setting-group-title">Keyboard Shortcuts</div>
+      <table class="kbd-table">
+        <tr><td><kbd>Space</kbd></td><td>Step one cycle</td></tr>
+        <tr><td><kbd>R</kbd></td><td>Toggle Run / Stop</td></tr>
+        <tr><td><kbd>L</kbd></td><td>Load program</td></tr>
+        <tr><td><kbd>Esc</kbd></td><td>Stop / close settings</td></tr>
+        <tr><td><kbd>X</kbd></td><td>Reset CPU</td></tr>
+        <tr><td><kbd>B</kbd></td><td>Toggle breakpoint at PC</td></tr>
+        <tr><td><kbd>S</kbd></td><td>Open settings</td></tr>
+      </table>
+    </div>
+
+    <!-- OPCODE REFERENCE -->
+    <div class="setting-group">
+      <div class="setting-group-title">Opcode Reference</div>
+      <table class="kbd-table" style="font-size:9px">
+        <thead><tr><td style="color:var(--accent);font-size:8px;letter-spacing:.1em">OP</td><td style="color:var(--accent);font-size:8px;letter-spacing:.1em">CODE</td><td style="color:var(--accent);font-size:8px;letter-spacing:.1em">DESCRIPTION</td></tr></thead>
+        <tr><td><kbd>HLT</kbd></td><td style="color:var(--muted);font-family:'Orbitron',monospace;font-size:8px">0x</td><td>Halt execution</td></tr>
+        <tr><td><kbd>ADD</kbd></td><td style="color:var(--muted);font-family:'Orbitron',monospace;font-size:8px">1x</td><td>ACC ← ACC + MEM[x]</td></tr>
+        <tr><td><kbd>SUB</kbd></td><td style="color:var(--muted);font-family:'Orbitron',monospace;font-size:8px">2x</td><td>ACC ← ACC − MEM[x]</td></tr>
+        <tr><td><kbd>STA</kbd></td><td style="color:var(--muted);font-family:'Orbitron',monospace;font-size:8px">3x</td><td>MEM[x] ← ACC</td></tr>
+        <tr><td><kbd>LDI</kbd></td><td style="color:var(--muted);font-family:'Orbitron',monospace;font-size:8px">4x</td><td>ACC ← immediate #x</td></tr>
+        <tr><td><kbd>LDA</kbd></td><td style="color:var(--muted);font-family:'Orbitron',monospace;font-size:8px">5x</td><td>ACC ← MEM[x]</td></tr>
+        <tr><td><kbd>JMP</kbd></td><td style="color:var(--muted);font-family:'Orbitron',monospace;font-size:8px">6x</td><td>PC ← x (unconditional)</td></tr>
+        <tr><td><kbd>JZ</kbd></td><td style="color:var(--muted);font-family:'Orbitron',monospace;font-size:8px">7x</td><td>PC ← x if Z flag set</td></tr>
+        <tr><td><kbd>OUT</kbd></td><td style="color:var(--muted);font-family:'Orbitron',monospace;font-size:8px">8x</td><td>Output ACC to I/O</td></tr>
+        <tr><td><kbd>INP</kbd></td><td style="color:var(--muted);font-family:'Orbitron',monospace;font-size:8px">9x</td><td>ACC ← next input value</td></tr>
+        <tr><td><kbd>AND</kbd></td><td style="color:var(--muted);font-family:'Orbitron',monospace;font-size:8px">Ax</td><td>ACC ← ACC &amp; MEM[x]</td></tr>
+        <tr><td><kbd>OR</kbd></td><td style="color:var(--muted);font-family:'Orbitron',monospace;font-size:8px">Bx</td><td>ACC ← ACC | MEM[x]</td></tr>
+        <tr><td><kbd>MUL</kbd></td><td style="color:var(--muted);font-family:'Orbitron',monospace;font-size:8px">Cx</td><td>ACC ← ACC × MEM[x]</td></tr>
+        <tr><td><kbd>JNZ</kbd></td><td style="color:var(--muted);font-family:'Orbitron',monospace;font-size:8px">Dx</td><td>PC ← x if Z flag clear</td></tr>
+        <tr><td><kbd>NOP</kbd></td><td style="color:var(--muted);font-family:'Orbitron',monospace;font-size:8px">Ex</td><td>No operation</td></tr>
+        <tr><td><kbd>NOT</kbd></td><td style="color:var(--muted);font-family:'Orbitron',monospace;font-size:8px">Fx</td><td>ACC ← ~ACC (bitwise NOT)</td></tr>
+      </table>
+      <div style="font-size:8px;color:var(--dim);margin-top:6px;line-height:1.6">Instruction format: <span style="font-family:'Orbitron',monospace;color:var(--muted)">[OP:4 bits][ADDR:4 bits]</span> — upper nibble = opcode, lower = operand address</div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════════════ MAIN SHELL ═══════════════════════ -->
+<div class="shell" id="shell">
+
+  <!-- Titlebar -->
+  <div class="titlebar">
+    <h1>CPU SIM </h1>
+    <span style="font-size:9px;color:var(--muted);letter-spacing:.1em">VON NEUMANN SIMULATOR</span>
+    <div class="phase-legend">
+      <div class="phase-pip pip-fetch">FETCH</div>
+      <div class="phase-pip pip-decode">DECODE</div>
+      <div class="phase-pip pip-execute">EXECUTE</div>
+    </div>
+    <span class="cycle-ctr" id="cycle-ctr">CYCLES: 0000</span>
+    <span class="phase-badge phase-IDLE" id="phase-badge">IDLE</span>
+    <div class="titlebar-btns">
+      <button class="tb-btn" title="Settings (S)" onclick="openSettings()">⚙ SETTINGS</button>
+    </div>
+  </div>
+
+  <!-- LEFT: Editor -->
+  <div class="left-panel">
+    <div class="panel-label">PROGRAM EDITOR</div>
+    <div class="editor-wrap">
+      <textarea id="editor" spellcheck="false"> INP
+STA 14
+INP
+ADD 14
+OUT
+HLT
+        
+      </textarea>
+    </div>
+    <div class="speed-row">
+      <span>SPEED</span>
+      <input type="range" id="speed" min="30" max="900" value="350" step="10"/>
+      <span id="speed-val">350ms</span>
+    </div>
+    <div class="btn-group">
+      <button class="btn-load" onclick="loadProgram()">▼ LOAD TO MEMORY</button>
+      <div style="display:flex;gap:5px">
+        <button class="btn-step" style="flex:1" onclick="stepCPU()">► STEP</button>
+        <button class="btn-run" style="flex:1" id="run-btn" onclick="toggleRun()">▶▶ RUN</button>
+      </div>
+      <div style="display:flex;gap:5px">
+        <button class="btn-reset" style="flex:1" onclick="resetCPU()">⟳ RESET</button>
+        <button class="btn-icon" style="flex:1" title="Toggle breakpoint at PC" onclick="toggleBPAtPC()">◉ BREAKPT</button>
+      </div>
+    </div>
+    <div class="desc-bar" id="desc-bar">Load a program to begin.</div>
+  </div>
+
+  <!-- CENTRE: SVG Schematic -->
+  <div class="schematic" id="schematic-pane">
+    <svg id="schematic" viewBox="0 0 520 380">
+      <!-- ── Background buses ── -->
+      <line x1="130" y1="60" x2="310" y2="60" stroke="var(--dim)" stroke-width="8" fill="none"/>
+      <path d="M 410 55 L 414 55 Q 420 55 420 61 L 420 303 Q 420 309 414 309 L 410 309" stroke="var(--dim)" stroke-width="8" fill="none"/>
+      <line x1="310" y1="310" x2="130" y2="310" stroke="var(--dim)" stroke-width="8" fill="none"/>
+      <line x1="130" y1="197" x2="155" y2="197" stroke="var(--dim)" stroke-width="4" fill="none"/>  
+      <line x1="310" y1="180" x2="249" y2="180" stroke="var(--dim)" stroke-width="4" fill="none"/>
+      <!-- ── Active buses ── -->
+      <g id="bus-fetch-h"><line x1="130" y1="60" x2="310" y2="60" class="bus-active-line" stroke="var(--fetch)" opacity="0"/></g>
+      <g id="bus-fetch-v">
+      <path d="M 410 55 L 414 55 Q 420 55 420 61 L 420 303 Q 420 309 414 309 L 410 309" class="bus-active-line" stroke="var(--fetch)" opacity="0"/>
+      </g>
+      <g id="bus-data-back"><line x1="310" y1="310" x2="130" y2="310" class="bus-active-line" stroke="var(--fetch)" opacity="0" style="animation-direction:reverse"/></g>
+      <g id="bus-decode-act"><line x1="130" y1="197" x2="155" y2="197" class="bus-active-line" stroke="var(--decode)" opacity="0"/></g>
+      <g id="bus-execute-act"><line x1="310" y1="180" x2="249" y2="180" class="bus-active-line" stroke="var(--execute)" opacity="0"/></g>
+
+      <!-- ── Control Unit ── -->
+      <rect id="cu-box" x="30" y="258" width="120" height="72" rx="3" fill="var(--panel)" stroke="var(--border)" stroke-width="1.5"/>
+      <text x="90" y="275" text-anchor="middle" font-size="8" fill="var(--muted)" font-family="'Share Tech Mono',monospace" letter-spacing="1">CONTROL UNIT</text>
+      <text id="cu-phase" x="90" y="316" text-anchor="middle" font-size="13" fill="var(--muted)" font-family="'Orbitron',monospace" font-weight="700">IDLE</text>
+
+      <!-- ── PC ── -->
+      <rect id="pc-box" x="30" y="30" width="100" height="50" rx="3" fill="var(--panel)" stroke="var(--border)" stroke-width="1.5"/>
+      <text x="80" y="46" text-anchor="middle" font-size="8" fill="var(--muted)" font-family="'Share Tech Mono',monospace">PC</text>
+      <text x="80" y="47" text-anchor="middle" font-size="7" fill="var(--muted)" font-family="'Share Tech Mono',monospace" dy="9">PROG COUNTER</text>
+      <text id="pc-val" x="80" y="70" text-anchor="middle" font-size="14" fill="var(--text)" font-family="'Orbitron',monospace" font-weight="700">00</text>
+
+      <!-- ── IR ── -->
+      <rect id="ir-box" x="30" y="172" width="100" height="50" rx="3" fill="var(--panel)" stroke="var(--border)" stroke-width="1.5"/>
+      <text x="80" y="188" text-anchor="middle" font-size="8" fill="var(--muted)" font-family="'Share Tech Mono',monospace">IR</text>
+      <text x="80" y="188" text-anchor="middle" font-size="7" fill="var(--muted)" font-family="'Share Tech Mono',monospace" dy="9">INSTRUCTION REG</text>
+      <text id="ir-val" x="80" y="212" text-anchor="middle" font-size="14" fill="var(--text)" font-family="'Orbitron',monospace" font-weight="700">00</text>
+
+      <!-- ── MAR ── -->
+      <rect id="mar-box" x="310" y="30" width="100" height="50" rx="3" fill="var(--panel)" stroke="var(--border)" stroke-width="1.5"/>
+      <text x="360" y="46" text-anchor="middle" font-size="8" fill="var(--muted)" font-family="'Share Tech Mono',monospace">MAR</text>
+      <text x="360" y="46" text-anchor="middle" font-size="7" fill="var(--muted)" font-family="'Share Tech Mono',monospace" dy="9">MEMORY ADDR REG</text>
+      <text id="mar-val" x="360" y="70" text-anchor="middle" font-size="14" fill="var(--text)" font-family="'Orbitron',monospace" font-weight="700">00</text>
+
+      <!-- ── MDR ── -->
+      <rect id="mdr-box" x="310" y="284" width="100" height="50" rx="3" fill="var(--panel)" stroke="var(--border)" stroke-width="1.5"/>
+      <text x="360" y="300" text-anchor="middle" font-size="8" fill="var(--muted)" font-family="'Share Tech Mono',monospace">MDR</text>
+      <text x="360" y="300" text-anchor="middle" font-size="7" fill="var(--muted)" font-family="'Share Tech Mono',monospace" dy="9">MEMORY DATA REG</text>
+      <text id="mdr-val" x="360" y="324" text-anchor="middle" font-size="14" fill="var(--text)" font-family="'Orbitron',monospace" font-weight="700">00</text>
+
+      <!-- ── ACC ── -->
+      <rect id="ac-box" x="310" y="155" width="100" height="50" rx="3" fill="var(--panel)" stroke="var(--border)" stroke-width="1.5"/>
+      <text x="360" y="171" text-anchor="middle" font-size="8" fill="var(--muted)" font-family="'Share Tech Mono',monospace">ACCUMULATOR</text>
+      <text x="360" y="171" text-anchor="middle" font-size="7" fill="var(--muted)" font-family="'Share Tech Mono',monospace" dy="9">ACC REGISTER</text>
+      <text id="ac-val" x="360" y="195" text-anchor="middle" font-size="14" fill="var(--text)" font-family="'Orbitron',monospace" font-weight="700">00</text>
+
+      <!-- ── ALU ── -->
+      <polygon points="155,158 202,138 249,158 249,228 202,248 155,228" fill="var(--surface)" stroke="var(--border)" stroke-width="1.5"/>
+      <text x="202" y="187" text-anchor="middle" font-size="11" fill="var(--muted)" font-family="'Share Tech Mono',monospace" letter-spacing="1">ALU</text>
+      <text id="alu-op" x="202" y="203" text-anchor="middle" font-size="9" fill="var(--muted)" font-family="'Share Tech Mono',monospace">—</text>
+      <text id="alu-result" x="202" y="220" text-anchor="middle" font-size="12" fill="var(--dim)" font-family="'Orbitron',monospace">—</text>
+
+      <!-- ── RAM block ── -->
+      <rect x="450" y="18" width="64" height="344" rx="3" fill="var(--bg)" stroke="var(--border)" stroke-width="1"/>
+      <text x="482" y="12" text-anchor="middle" font-size="8" fill="var(--muted)" font-family="'Share Tech Mono',monospace">UNIFIED RAM</text>
+      <g id="mem-cells-svg"></g>
+
+      <!-- Bus labels -->
+      <text x="220" y="52" text-anchor="middle" font-size="7" fill="var(--dim)" font-family="'Share Tech Mono',monospace">ADDRESS BUS</text>
+      <text x="435" y="192" text-anchor="middle" font-size="7" fill="var(--dim)" font-family="'Share Tech Mono',monospace" transform="rotate(90,435,192)">DATA BUS</text>
+
+      <!-- Static connectors -->
+      <line x1="130" y1="55" x2="310" y2="55" stroke="var(--border)" stroke-width="1" stroke-dasharray="3 3"/>
+      <line x1="420" y1="55" x2="450" y2="55" stroke="var(--dim)" stroke-width="2" fill="none"/>
+      <line x1="420" y1="55" x2="450" y2="55" stroke="var(--dim)" stroke-width="2" fill="none"/>
+      <line x1="420" y1="309" x2="450" y2="309" stroke="var(--dim)" stroke-width="2" fill="none"/>
+      <line x1="90" y1="222" x2="90" y2="258" stroke="var(--border)" stroke-width="1"/>
+    </svg>
+  </div>
+
+  <!-- RIGHT: Registers -->
+  <div class="right-panel">
+    <div class="panel-label">CPU REGISTERS</div>
+    <div class="reg-list">
+      <div class="reg-item" id="reg-PC"><div><div class="reg-name">PC — PROGRAM COUNTER</div><div style="font-size:8px;color:var(--dim)">Next instruction address</div></div><div class="reg-val" id="rPC">00</div></div>
+      <div class="reg-item" id="reg-IR"><div><div class="reg-name">IR — INSTRUCTION REG</div><div style="font-size:8px;color:var(--dim)">Current instruction word</div></div><div class="reg-val" id="rIR">00</div></div>
+      <div class="reg-item" id="reg-MAR"><div><div class="reg-name">MAR — MEMORY ADDR REG</div><div style="font-size:8px;color:var(--dim)">Memory address pointer</div></div><div class="reg-val" id="rMAR">00</div></div>
+      <div class="reg-item" id="reg-MDR"><div><div class="reg-name">MDR — MEMORY DATA REG</div><div style="font-size:8px;color:var(--dim)">Memory data buffer</div></div><div class="reg-val" id="rMDR">00</div></div>
+      <div class="reg-item" id="reg-AC"><div><div class="reg-name">ACC — ACCUMULATOR</div><div style="font-size:8px;color:var(--dim)">ALU result register</div></div><div class="reg-val" id="rAC">00</div></div>
+    </div>
+    <div class="flags-row">
+      <div class="flag" id="flag-Z">Z<br/>ZERO</div>
+      <div class="flag" id="flag-N">N<br/>NEG</div>
+      <div class="flag" id="flag-C">C<br/>CARRY</div>
+      <div class="flag" id="flag-V">V<br/>OVFL</div>
+    </div>
+  </div>
+
+  <!-- BOTTOM LEFT: Log -->
+  <div class="bottom-section">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:0 0 6px;border-bottom:1px solid var(--border);margin-bottom:6px;flex-shrink:0">
+      <div class="panel-label" style="padding:0;border:none">EXECUTION TRACE</div>
+      <button onclick="document.getElementById('log-area').innerHTML=''" style="background:transparent;border:1px solid var(--dim);color:var(--dim);font-size:8px;padding:2px 7px;letter-spacing:.08em;cursor:pointer;border-radius:2px;text-transform:uppercase;font-family:var(--font-ui)" onmouseover="this.style.color='var(--muted)';this.style.borderColor='var(--muted)'" onmouseout="this.style.color='var(--dim)';this.style.borderColor='var(--dim)'">CLR</button>
+    </div>
+    <div class="log-area" id="log-area"><div class="log-line" style="color:var(--dim)">— awaiting program —</div></div>
+  </div>
+
+  <!-- BOTTOM CENTRE: I/O -->
+  <div class="bottom-section">
+    <div class="panel-label" style="padding:0 0 5px;border:none">I/O DEVICE</div>
+    <div class="io-wrap">
+      <div>
+        <div class="io-label" style="margin-bottom:3px">INPUT QUEUE (one value per line)</div>
+        <textarea id="io-input" class="io-input" rows="3" placeholder=""></textarea>
+      </div>
+      <div style="flex:1;overflow:hidden;display:flex;flex-direction:column;gap:3px;min-height:0">
+        <div class="io-label">OUTPUT LOG</div>
+        <div class="io-output" id="io-output"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BOTTOM RIGHT: Memory -->
+  <div class="bottom-section">
+    <div class="panel-label" style="padding:0 0 5px;border:none">UNIFIED MEMORY <span style="color:var(--dim);font-size:7px;letter-spacing:.05em;font-weight:400">— CLICK VAL TO EDIT · CLICK ADDR FOR BREAKPOINT</span></div>
+    <div class="mem-wrap">
+      <table class="mem-table">
+        <thead><tr><th>ADDR</th><th>VAL</th><th>DISASM</th><th>BP</th></tr></thead>
+        <tbody id="mem-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ═══════════════════════════════════════
+//  OPCODES
+// ═══════════════════════════════════════
+const OPCODES={0:'HLT',1:'ADD',2:'SUB',3:'STA',4:'LDI',5:'LDA',6:'JMP',7:'JZ',8:'OUT',9:'INP',10:'AND',11:'OR',12:'MUL',13:'JNZ',14:'NOP',15:'NOT'};
+const OPNAMES={HLT:0,ADD:1,SUB:2,STA:3,LDI:4,LDA:5,JMP:6,JZ:7,OUT:8,INP:9,AND:10,OR:11,MUL:12,JNZ:13,NOP:14,NOT:15};
+
+// ═══════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════
+let MEM_SIZE=16;
+let cpu={mem:new Uint8Array(MEM_SIZE),pc:0,ir:0,mar:0,mbr:0,ac:0,phase:'IDLE',flags:{Z:true,N:false,C:false,V:false},cycles:0,halted:false};
+let useBase=16;
+let running=false;
+let runTimer=null;
+let outputLog=[];
+let breakpoints=new Set();
+let editingCell=-1;
+
+// ═══════════════════════════════════════
+//  FORMAT
+// ═══════════════════════════════════════
+function fmt(v){
+  v=v&0xFF;
+  if(useBase===16) return v.toString(16).toUpperCase().padStart(2,'0');
+  if(useBase===2)  return v.toString(2).padStart(8,'0');
+  if(useBase===8)  return v.toString(8).padStart(3,'0');
+  return String(v);
+}
+function disasm(b){
+  const op=OPCODES[b>>4]||'???',a=b&0xF;
+  if(['HLT','OUT','INP','NOT','NOP'].includes(op)) return op;
+  if(op==='LDI') return `${op} #${a}`;
+  return `${op} ${a.toString(16).toUpperCase()}`;
+}
+
+// ═══════════════════════════════════════
+//  ASSEMBLER
+// ═══════════════════════════════════════
+function assemble(src){
+  const lines=src.split('\n').map(l=>l.replace(/;.*/,'').trim()).filter(Boolean);
+  return lines.map(line=>{
+    const [inst,...rest]=line.toUpperCase().split(/\s+/);
+    const op=OPNAMES[inst];
+    if(op===undefined) return 0;
+    if(['HLT','OUT','INP','NOT','NOP'].includes(inst)) return op<<4;
+    return ((op<<4)|(parseInt(rest[0])||0))&0xFF;
+  });
+}
+
+// ═══════════════════════════════════════
+//  CPU STEP
+// ═══════════════════════════════════════
+function step() {
+  if (cpu.halted) return;
+  
+  const p = cpu.phase;
+
+  if (p === 'IDLE' || p === 'EXECUTE') {
+    cpu.cycles++; // Increment cycle count here
+    cpu.phase = 'FETCH';
+    cpu.mar = cpu.pc;
+    addLog(`FETCH  PC=${fmt(cpu.pc)} → MAR`, 'log-fetch');
+  } 
+  else if (p === 'FETCH') {
+    cpu.mbr = cpu.mem[cpu.mar] || 0;
+    cpu.ir = cpu.mbr;
+    // Explicitly increment PC and ensure it's saved back to the cpu object
+    cpu.pc = (cpu.pc + 1) % MEM_SIZE; 
+    cpu.phase = 'DECODE';
+    addLog(`FETCH  MEM[${fmt(cpu.mar)}]=${fmt(cpu.mbr)} → IR  PC++`, 'log-fetch');
+  } 
+  else if (p === 'DECODE') {
+    cpu.mar = cpu.ir & 0x0F;
+    cpu.phase = 'EXECUTE';
+    const op = OPCODES[cpu.ir >> 4] || '?';
+    addLog(`DECODE IR=${fmt(cpu.ir)} → OP:${op} ADDR:${fmt(cpu.ir & 0x0F)}`, 'log-decode');
+    
+    // Trigger execution immediately so the PC move is finalized
+    execute(); 
+  }
+  
+  updateUI();
+}
+
+function execute(){
+  const op=cpu.ir>>4, adr=cpu.mar, prev=cpu.ac;
+  let jumped=false;
+  switch(op){
+    case 0: cpu.halted=true; cpu.phase='HALTED'; addLog('HLT — stopped','log-halt'); break;
+    case 1:{const r=cpu.ac+cpu.mem[adr]; setFlagAdd(r,cpu.ac,cpu.mem[adr]); cpu.ac=r&0xFF; addLog(`ADD  AC(${fmt(prev)})+MEM[${fmt(adr)}](${fmt(cpu.mem[adr])})=${fmt(cpu.ac)}`,'log-execute');} break;
+    case 2:{const r=cpu.ac-cpu.mem[adr]; setFlagSub(r,cpu.ac,cpu.mem[adr]); cpu.ac=r&0xFF; addLog(`SUB  AC(${fmt(prev)})-MEM[${fmt(adr)}](${fmt(cpu.mem[adr])})=${fmt(cpu.ac)}`,'log-execute');} break;
+    case 3: cpu.mem[adr]=cpu.ac; addLog(`STA  AC(${fmt(cpu.ac)})→MEM[${fmt(adr)}]`,'log-execute'); break;
+    case 4: cpu.ac=adr; addLog(`LDI  AC←#${fmt(adr)}`,'log-execute'); break;
+    case 5: cpu.ac=cpu.mem[adr]; addLog(`LDA  AC←MEM[${fmt(adr)}]=${fmt(cpu.ac)}`,'log-execute'); break;
+    case 6: cpu.pc=adr; jumped=true; addLog(`JMP  →${fmt(adr)}`,'log-execute'); break;
+    case 7: if(cpu.flags.Z){cpu.pc=adr;jumped=true;addLog(`JZ   →${fmt(adr)} (taken)`,'log-execute');}else addLog(`JZ   not taken (Z=0)`,'log-execute'); break;
+    case 13: if(!cpu.flags.Z){cpu.pc=adr;jumped=true;addLog(`JNZ  →${fmt(adr)} (taken)`,'log-execute');}else addLog(`JNZ  not taken (Z=1)`,'log-execute'); break;
+    case 8:{outputLog.push(cpu.ac);renderIOOutput();addLog(`OUT  → ${cpu.ac} (${fmt(cpu.ac)})`,'log-io');} break;
+    case 9: {
+      const v = getInput();
+      const ioBox = document.getElementById('io-input');
+      
+      if (v === null) {
+        cpu.pc = (cpu.pc - 1 + MEM_SIZE) % MEM_SIZE; 
+        cpu.phase = 'FETCH';
+        stopRun();
+        
+        // Highlight the box and put the cursor inside it
+        ioBox.classList.add('io-waiting');
+        ioBox.focus();
+        
+        addLog('PAUSED: Awaiting input. Type a number and press Enter.', 'log-bp');
+        return; 
+      }
+      
+      // Successfully got input, remove the glow
+      ioBox.classList.remove('io-waiting');
+      cpu.ac = v;
+      addLog(`INP  AC←${v}`, 'log-io');
+    } break;
+    case 10: cpu.ac=(cpu.ac&cpu.mem[adr])&0xFF; addLog(`AND  AC&MEM[${fmt(adr)}]=${fmt(cpu.ac)}`,'log-execute'); break;
+    case 11: cpu.ac=(cpu.ac|cpu.mem[adr])&0xFF; addLog(`OR   AC|MEM[${fmt(adr)}]=${fmt(cpu.ac)}`,'log-execute'); break;
+    case 12:{const r=cpu.ac*cpu.mem[adr];cpu.ac=r&0xFF;addLog(`MUL  AC×MEM[${fmt(adr)}]=${fmt(cpu.ac)}`,'log-execute');} break;
+    case 15: cpu.ac=(~cpu.ac)&0xFF; addLog(`NOT  ~AC=${fmt(cpu.ac)}`,'log-execute'); break;
+    default: addLog('NOP','log-execute');
+  }
+  if(!cpu.halted){
+    cpu.flags.Z=cpu.ac===0; cpu.flags.N=cpu.ac>127;
+    const aluOps={1:'+',2:'-',10:'&',11:'|',12:'×',15:'~'};
+    setT('alu-op',aluOps[op]||OPCODES[op]||'—');
+    setT('alu-result',fmt(cpu.ac));
+  }
+  // check breakpoint after execute
+  if(!cpu.halted && breakpoints.has(cpu.pc)){
+    addLog(`◉ BREAKPOINT hit at ${fmt(cpu.pc)}`,'log-bp');
+    stopRun();
+  }
+}
+
+function setFlagAdd(r,a,b){cpu.flags.C=r>255;cpu.flags.V=((~(a^b))&(a^r)&0x80)!==0;}
+function setFlagSub(r,a,b){cpu.flags.C=r<0;cpu.flags.V=((a^b)&(a^(r&0xFF))&0x80)!==0;}
+
+function getInput() {
+  const raw = document.getElementById('io-input').value;
+  const vals = raw.split('\n').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+  
+  if (vals.length > 0) {
+    const v = vals.shift() & 0xFF;
+    document.getElementById('io-input').value = vals.join('\n');
+    return v;
+  }
+  
+  return null; // Signal that the queue is empty
+}
+
+// ═══════════════════════════════════════
+//  LOAD / RESET
+// ═══════════════════════════════════════
+function loadProgram(){
+  stopRun();
+  const bytes=assemble(document.getElementById('editor').value);
+  cpu.mem=new Uint8Array(MEM_SIZE);
+  bytes.forEach((b,i)=>{if(i<MEM_SIZE)cpu.mem[i]=b;});
+  cpu.pc=0;cpu.ir=0;cpu.mar=0;cpu.mbr=0;cpu.ac=0;
+  cpu.phase='IDLE';cpu.halted=false;cpu.cycles=0;
+  cpu.flags={Z:true,N:false,C:false,V:false};
+  outputLog=[];
+  document.getElementById('log-area').innerHTML='<div class="log-line" style="color:var(--accent2)">— program loaded —</div>';
+  document.getElementById('io-output').innerHTML='';
+  document.getElementById('desc-bar').textContent='Loaded. Press STEP or RUN.';
+  updateUI();
+}
+function resetCPU(){
+  stopRun();
+  cpu.pc=0;cpu.ir=0;cpu.mar=0;cpu.mbr=0;cpu.ac=0;
+  cpu.phase='IDLE';cpu.halted=false;cpu.cycles=0;
+  cpu.flags={Z:true,N:false,C:false,V:false};
+  outputLog=[];
+  document.getElementById('io-output').innerHTML='';
+  document.getElementById('log-area').innerHTML='<div class="log-line" style="color:var(--dim)">— reset —</div>';
+  document.getElementById('desc-bar').textContent='CPU reset. Memory retained.';
+  updateUI();
+}
+function stepCPU(){if(!cpu.halted)step();}
+
+// ═══════════════════════════════════════
+//  RUN
+// ═══════════════════════════════════════
+function toggleRun(){running?stopRun():startRun();}
+function startRun(){
+  if(cpu.halted) return;
+  running=true;
+  document.getElementById('run-btn').textContent='■ STOP';
+  document.getElementById('run-btn').classList.add('running');
+  tick();
+}
+function stopRun(){
+  running=false;clearTimeout(runTimer);
+  document.getElementById('run-btn').textContent='▶▶ RUN';
+  document.getElementById('run-btn').classList.remove('running');
+}
+function tick(){
+  if(!running||cpu.halted){stopRun();return;}
+  step();
+  const spd=1050-parseInt(document.getElementById('speed').value);
+  runTimer=setTimeout(tick,Math.max(30,spd));
+}
+document.getElementById('speed').addEventListener('input',e=>{
+  document.getElementById('speed-val').textContent=e.target.value+'ms';
+});
+
+// ═══════════════════════════════════════
+//  BREAKPOINTS
+// ═══════════════════════════════════════
+function toggleBP(addr){
+  if(breakpoints.has(addr)) breakpoints.delete(addr);
+  else breakpoints.add(addr);
+  renderMemTable();
+}
+function toggleBPAtPC(){toggleBP(cpu.pc);}
+
+// ═══════════════════════════════════════
+//  MEMORY EDIT
+// ═══════════════════════════════════════
+function startMemEdit(addr){
+  if(editingCell===addr) return;
+  editingCell=addr;
+  renderMemTable();
+  const inp=document.getElementById('mem-edit-'+addr);
+  if(inp){inp.focus();inp.select();}
+}
+function commitMemEdit(addr,val){
+  const v=parseInt(val,useBase===2?2:useBase===8?8:useBase===16?16:10);
+  if(!isNaN(v)) cpu.mem[addr]=v&0xFF;
+  editingCell=-1;
+  renderMemTable();
+}
+
+// ═══════════════════════════════════════
+//  UI RENDER
+// ═══════════════════════════════════════
+function updateUI(){
+  const c=cpu;
+  // titlebar
+  const badge=document.getElementById('phase-badge');
+  badge.textContent=c.phase; badge.className='phase-badge phase-'+c.phase;
+  document.getElementById('cycle-ctr').textContent='CYCLES: '+String(c.cycles).padStart(4,'0');
+  // SVG values
+  setT('pc-val',fmt(c.pc));setT('ir-val',fmt(c.ir));setT('mar-val',fmt(c.mar));setT('mdr-val',fmt(c.mbr));setT('ac-val',fmt(c.ac));
+  setT('cu-phase',c.phase);
+  // SVG highlights
+  const glow=document.body.dataset.glow!=='off';
+  const glowStyle=(col)=>glow?`filter:drop-shadow(0 0 8px ${col})`:'';
+  svgHighlight('pc-box', c.phase==='FETCH', 'var(--fetch)', glow);
+  svgHighlight('mar-box', c.phase==='FETCH', 'var(--fetch)', glow);
+  svgHighlight('mdr-box', c.phase==='FETCH', 'var(--fetch)', glow);
+  svgHighlight('ir-box', c.phase==='DECODE', 'var(--decode)', glow);
+  svgHighlight('ac-box', c.phase==='EXECUTE', 'var(--execute)', glow);
+  svgHighlight('cu-box', c.phase!=='IDLE'&&c.phase!=='HALTED', 'var(--accent2)', glow);
+  // buses
+  const iF=c.phase==='FETCH', iD=c.phase==='DECODE', iE=c.phase==='EXECUTE';
+  setOpacity('bus-fetch-h',iF?1:0); setOpacity('bus-fetch-v',iF?1:0); setOpacity('bus-data-back',iF?1:0);
+  setOpacity('bus-decode-act',iD?1:0); setOpacity('bus-execute-act',iE?1:0);
+  // right panel
+  updateReg('reg-PC','rPC',c.pc,c.phase==='FETCH');
+  updateReg('reg-MAR','rMAR',c.mar,c.phase==='FETCH');
+  updateReg('reg-MDR','rMDR',c.mbr,c.phase==='FETCH');
+  updateReg('reg-IR','rIR',c.ir,c.phase==='DECODE');
+  updateReg('reg-AC','rAC',c.ac,c.phase==='EXECUTE');
+  // flags
+  ['Z','N','C','V'].forEach(f=>{
+    const el=document.getElementById('flag-'+f);
+    if(el) el.className='flag'+(c.flags[f]?' on':'');
+  });
+  renderSVGMem(); renderMemTable(); updateDesc();
+}
+
+function svgHighlight(id, active, color, glow){
+  const e=document.getElementById(id); if(!e) return;
+  if(active){
+    e.setAttribute('fill',`color-mix(in srgb,${color} 12%,var(--surface))`);
+    e.setAttribute('stroke',color);
+    if(glow) e.style.filter=`drop-shadow(0 0 8px ${color})`;
+  } else {
+    e.setAttribute('fill','var(--panel)');
+    e.setAttribute('stroke','var(--border)');
+    e.style.filter='';
+  }
+}
+
+function updateDesc(){
+  const c=cpu;
+  const map={
+    IDLE:'Waiting. Load a program and press STEP or RUN.',
+    FETCH:`FETCH: PC(${fmt(c.pc)}) → MAR → memory[MAR] read into MDR/IR → PC incremented.`,
+    DECODE:`DECODE: IR(${fmt(c.ir)}) decoded → opcode=${OPCODES[c.ir>>4]||'?'}, operand=${fmt(c.ir&0xF)} → MAR.`,
+    EXECUTE:`EXECUTE: ${OPCODES[c.ir>>4]||'?'} on ACC(${fmt(c.ac)}) with MEM[${fmt(c.mar)}]=${fmt(c.mem?.[c.mar]??0)}.`,
+    HALTED:'HALTED: HLT reached. Press RESET to restart.'
+  };
+  document.getElementById('desc-bar').textContent=map[c.phase]||'';
+}
+
+function renderSVGMem(){
+  const g = document.getElementById('mem-cells-svg'); if (!g) return;
+  
+  // Exactly 340px of internal height available
+  const cellH = 340 / Math.min(MEM_SIZE, 16); 
+  let html = '';
+  
+  for(let i = 0; i < Math.min(MEM_SIZE, 16); i++) {
+    // Fallback to 0 prevents the TypeError that blanked your screen
+    const v = cpu.mem ? cpu.mem[i] : 0; 
+    const y = 20 + (i * cellH); // Starts precisely at top inner bound
+    const active = cpu.mar === i && cpu.phase !== 'IDLE';
+    const bp = breakpoints.has(i);
+    
+    const fill = active ? 'color-mix(in srgb,var(--execute) 15%,var(--bg))' : bp ? 'color-mix(in srgb,var(--halted) 10%,var(--bg))' : 'var(--bg)';
+    const stroke = active ? 'var(--execute)' : bp ? 'var(--halted)' : 'var(--border)';
+    
+    html += `<rect x="452" y="${y}" width="60" height="${cellH - 2}" rx="2" fill="${fill}" stroke="${stroke}" stroke-width="1"/>`;
+    html += `<text x="458" y="${y + (cellH / 2) + 3}" font-size="8" fill="var(--muted)" font-family="'Share Tech Mono',monospace">${i.toString(16).toUpperCase()}</text>`;
+    
+    // CHANGED: text-anchor set to "end", x moved to 508 to ensure right padding
+    html += `<text x="508" y="${y + (cellH / 2) + 3}" text-anchor="end" font-size="8" fill="${active ? 'var(--execute)' : 'var(--muted)'}" font-family="'Orbitron',monospace">${(v || 0).toString(16).toUpperCase().padStart(2, '0')}</text>`;
+  }
+  g.innerHTML = html;
+}
+
+function renderMemTable(){
+  const tb=document.getElementById('mem-tbody'); if(!tb) return;
+  let html='';
+  for(let i=0;i<MEM_SIZE;i++){
+    const v=cpu.mem[i], active=cpu.mar===i&&cpu.phase!=='IDLE', bp=breakpoints.has(i);
+    const tr=`${active?'active ':''} ${bp?'bp ':''} ${active&&bp?'bp-active':''}`;
+    if(editingCell===i){
+      html+=`<tr class="${tr}">
+        <td class="mem-addr">${i.toString(16).toUpperCase()}</td>
+        <td colspan="3"><input id="mem-edit-${i}" class="mem-edit-input" value="${fmt(v)}"
+          onblur="commitMemEdit(${i},this.value)"
+          onkeydown="if(event.key==='Enter')commitMemEdit(${i},this.value);if(event.key==='Escape'){editingCell=-1;renderMemTable();}"/></td>
+      </tr>`;
+    } else {
+      html+=`<tr class="${tr}">
+        <td class="mem-addr" onclick="toggleBP(${i})" title="Toggle breakpoint">${bp?'◉':i.toString(16).toUpperCase()}</td>
+        <td class="mem-hex" onclick="startMemEdit(${i})" title="Click to edit">${fmt(v)}</td>
+        <td class="mem-disasm">${disasm(v)}</td>
+        <td style="font-size:8px;color:var(--dim)">${bp?'●':''}</td>
+      </tr>`;
+    }
+  }
+  tb.innerHTML=html;
+}
+
+function renderIOOutput(){
+  const el=document.getElementById('io-output');
+  el.innerHTML=outputLog.map(v=>`<div class="io-out-item">${v} <span style="color:color-mix(in srgb,var(--accent3) 40%,var(--muted));font-size:8px">→ ${fmt(v)}</span></div>`).join('');
+  el.scrollTop=el.scrollHeight;
+}
+
+function addLog(msg,cls=''){
+  const area=document.getElementById('log-area');
+  const d=document.createElement('div');
+  d.className='log-line '+cls;
+  d.textContent=`[${String(cpu.cycles).padStart(4,'0')}] ${msg}`;
+  area.appendChild(d);
+  area.scrollTop=area.scrollHeight;
+  while(area.children.length>300) area.removeChild(area.firstChild);
+}
+
+function updateReg(boxId,valId,val,active){
+  const b=document.getElementById(boxId), v=document.getElementById(valId);
+  if(b) b.className='reg-item'+(active?' active':'');
+  if(v){v.textContent=fmt(val);v.className='reg-val'+(active?' changed':'');}
+}
+
+function setT(id,v){const e=document.getElementById(id);if(e)e.textContent=v;}
+function setOpacity(id,v){const e=document.getElementById(id);if(e)e.style.opacity=v;}
+
+// ═══════════════════════════════════════
+//  SETTINGS
+// ═══════════════════════════════════════
+function openSettings(){
+  document.getElementById('settings-overlay').classList.add('open');
+  document.getElementById('settings-drawer').classList.add('open');
+}
+function closeSettings(){
+  document.getElementById('settings-overlay').classList.remove('open');
+  document.getElementById('settings-drawer').classList.remove('open');
+}
+
+function setTheme(el, theme){
+  document.getElementById('body-el').dataset.theme=theme;
+  document.querySelectorAll('.theme-swatch').forEach(s=>s.classList.toggle('active',s===el));
+  updateUI();
+}
+
+function setFont(el){
+  const f=el.dataset.font;
+  document.documentElement.style.setProperty('--font-ui',f);
+  document.querySelectorAll('.font-option[data-font]').forEach(o=>o.classList.toggle('active',o===el));
+}
+
+function setFontSize(v){
+  document.documentElement.style.setProperty('--font-size',v+'px');
+  document.getElementById('font-size-val').textContent=v+'px';
+}
+
+function setBase(el, base){
+  useBase=base;
+  document.querySelectorAll('[data-base]').forEach(b=>b.classList.toggle('active',b.dataset.base==base));
+  updateUI(); renderMemTable();
+}
+
+function setMemSize(v){
+  MEM_SIZE=parseInt(v);
+  cpu.mem=new Uint8Array(MEM_SIZE);
+  cpu.pc=0;cpu.phase='IDLE';cpu.halted=false;cpu.cycles=0;
+  breakpoints.clear();
+  document.getElementById('log-area').innerHTML='<div class="log-line" style="color:var(--accent3)">— memory resized to '+v+' cells — reload program —</div>';
+  updateUI();
+}
+
+function toggleScanlines(on){
+  document.getElementById('body-el').classList.toggle('scanlines',on);
+}
+function toggleAnim(on){
+  document.body.dataset.animations=on?'on':'off';
+}
+function toggleGlow(on){
+  document.body.dataset.glow=on?'on':'off';
+  updateUI();
+}
+
+function exportASM(){
+  const code=document.getElementById('editor').value;
+  const a=document.createElement('a');
+  a.href='data:text/plain;charset=utf-8,'+encodeURIComponent(code);
+  a.download='program.asm'; a.click();
+}
+function importASM(input){
+  const f=input.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=e=>{document.getElementById('editor').value=e.target.result;};
+  r.readAsText(f);
+}
+
+// ═══════════════════════════════════════
+//  KEYBOARD SHORTCUTS
+// ═══════════════════════════════════════
+document.addEventListener('keydown', e=>{
+  if(e.target.tagName==='TEXTAREA'||e.target.tagName==='INPUT') return;
+  if(e.key==='Escape'){closeSettings();stopRun();return;}
+  if(e.key===' '){e.preventDefault();stepCPU();return;}
+  if(e.key==='r'||e.key==='R'){toggleRun();return;}
+  if(e.key==='l'||e.key==='L'){loadProgram();return;}
+  if(e.key==='x'||e.key==='X'){resetCPU();return;}
+  if(e.key==='b'||e.key==='B'){toggleBPAtPC();return;}
+  if(e.key==='s'||e.key==='S'){openSettings();return;}
+});
+// Listen for 'Enter' inside the I/O box
+document.getElementById('io-input').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') {
+    if (!e.shiftKey) { 
+      e.preventDefault(); 
+      this.classList.remove('io-waiting');
+      this.blur(); 
+      startRun(); 
+    }
+  }
+});
+// Restrict I/O box to numbers and newlines only
+document.getElementById('io-input').addEventListener('input', function(e) {
+  // Replace any character that is NOT a digit (0-9) or a newline (\n) with an empty string
+  this.value = this.value.replace(/[^0-9\n]/g, '');
+});
+// ═══════════════════════════════════════
+//  INIT
+// ═══════════════════════════════════════
+updateUI();
+</script>
+</body>
+</html>
