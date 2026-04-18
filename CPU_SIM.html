@@ -567,7 +567,7 @@ HLT
 //  OPCODES
 // ═══════════════════════════════════════
 const OPCODES={0:'HLT',1:'ADD',2:'SUB',3:'STA',4:'LDI',5:'LDA',6:'JMP',7:'JZ',8:'OUT',9:'INP',10:'AND',11:'OR',12:'MUL',13:'JNZ',14:'NOP',15:'NOT'};
-const OPNAMES={HLT:0,ADD:1,SUB:2,STA:3,LDI:4,LDA:5,JMP:6,JZ:7,OUT:8,INP:9,AND:10,OR:11,MUL:12,JNZ:13,NOP:14,NOT:15};
+const OPNAMES={HLT:0,ADD:1,SUB:2,STA:3,LDI:4,LDA:5,JMP:6,BRA:6,JZ:7,BRZ:7,OUT:8,INP:9,AND:10,OR:11,MUL:12,JNZ:13,NOP:14,NOT:15};
 
 // ═══════════════════════════════════════
 //  STATE
@@ -585,10 +585,16 @@ let editingCell=-1;
 //  FORMAT
 // ═══════════════════════════════════════
 function fmt(v){
-  v=v&0xFF;
-  if(useBase===16) return v.toString(16).toUpperCase().padStart(2,'0');
-  if(useBase===2)  return v.toString(2).padStart(8,'0');
-  if(useBase===8)  return v.toString(8).padStart(3,'0');
+  v = v & 0xFF;
+  if(useBase === 16) return v.toString(16).toUpperCase().padStart(2,'0');
+  if(useBase === 2)  return v.toString(2).padStart(8,'0');
+  if(useBase === 8)  return v.toString(8).padStart(3,'0');
+  
+  // If in Decimal mode, treat as a signed 8-bit integer (-128 to 127)
+  if(useBase === 10) {
+    let signed = v > 127 ? v - 256 : v;
+    return String(signed);
+  }
   return String(v);
 }
 function disasm(b){
@@ -1034,9 +1040,9 @@ document.getElementById('io-input').addEventListener('keydown', function(e) {
   }
 });
 // Restrict I/O box to numbers and newlines only
+// Restrict I/O box to numbers, negative signs, and newlines only
 document.getElementById('io-input').addEventListener('input', function(e) {
-  // Replace any character that is NOT a digit (0-9) or a newline (\n) with an empty string
-  this.value = this.value.replace(/[^0-9\n]/g, '');
+  this.value = this.value.replace(/[^0-9\n-]/g, '');
 });
 // ═══════════════════════════════════════
 //  INIT
